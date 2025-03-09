@@ -32,7 +32,7 @@ function createFileNewDateIfNeeded() {
         New-Item -ItemType File -Path $absolutePath | Out-Null
         Write-Host "The file '$absolutePath' has been created."
     } else {
-        Write-Host "The file '$absolutePath' already exists."
+        Write-Debug "The file '$absolutePath' already exists."
     }
 }
 
@@ -73,7 +73,7 @@ function saveNewDate($pattern) {
 
     try {
         $savedDates | ConvertTo-Json | Out-File -FilePath $absolutePath -Encoding UTF8
-        Write-Host "The new date has been saved to '$absolutePath'."
+        Write-Debug "The new date has been saved to '$absolutePath'."
     } catch {
         Write-Warning "Error writing to file '$absolutePath': $($_.Exception.Message)"
     }
