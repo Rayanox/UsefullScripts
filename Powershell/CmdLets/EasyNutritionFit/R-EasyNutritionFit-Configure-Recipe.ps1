@@ -1,15 +1,16 @@
 ﻿
-# Checker si N8n est lancé
-# Appel du workflow avec gestion d'erreur si retour != 200
-# Récupération de l'URL de configuration de la recette + ouverture de Chrome sur cette page
-# Commiter le tout + documenter dans Notion et N8n de mon serveur (et copier le workflow local vers mon serveur)
-
-
 function R-EasyNutritionFit-Configure-Recipe {
 	[CmdletBinding()]
 	Param(
         [parameter(Mandatory=$true)]
-		[string] $youtubeUrl
+		[string] $youtubeUrl,
+
+        [parameter(Mandatory=$true)]
+		[string] $RecipeName,
+
+        [Parameter(Mandatory = $false, HelpMessage = "If set, all confirmation prompts will be automatically accepted.")]
+        [switch]$ForceAnswersTrue = $false
+        
 	)
 
 
@@ -40,10 +41,10 @@ function R-EasyNutritionFit-Configure-Recipe {
 
     function extractYoutubeId($youtubeUrl) {
         $patterns = @(
-            'v=([-\w]{11})',       # Format standard
-            'youtu\.be/([-\w]{11})', # Format court
-            'embed/([-\w]{11})',    # Format intégré
-            'v/([-\w]{11})'         # Ancien format
+            'v=([-\w]{11})',       # Standard format
+            'youtu\.be/([-\w]{11})', # Short format
+            'embed/([-\w]{11})',    # Embedded format
+            'v/([-\w]{11})'         # Old format
         )
 
         foreach ($pattern in $patterns) {
@@ -71,7 +72,19 @@ function R-EasyNutritionFit-Configure-Recipe {
     $youtubeId = extractYoutubeId -youtubeUrl $youtubeUrl
 
     try {
-        $n8nResponse = Invoke-WebRequest -Uri "${N8N_WORKFLOW_PREPARE_RECIPE_URL}?YoutubeId=$youtubeId"
+
+        if(-not $ForceAnswersTrue) {
+            Write-Host -ForegroundColor Blue "Ready to configure the recipe. Press Enter to continue"
+            $confirm = Read-Host
+            if($confirm -ne "") {
+                Write-Host -ForegroundColor Yellow "Operation aborted."
+                return  
+            }
+        }
+
+        Write-Host -ForegroundColor Green "Starting the recipe configuration process..."
+
+        $n8nResponse = Invoke-WebRequest -Uri "${N8N_WORKFLOW_PREPARE_RECIPE_URL}?YoutubeId=$youtubeId&VideoName=$RecipeName"
         
         if($n8nResponse.StatusCode -ne 200) {
             Write-Error -Message "Received code doesn't equal 200. Exiting."
@@ -79,17 +92,18 @@ function R-EasyNutritionFit-Configure-Recipe {
         }
 
     } catch {
-        Write-Error -Message "Error occured when reaching N8N"
+        Write-Error -Message "Error occurred when reaching N8N"
         throw $_
     }
 
-    
+    Write-Host -ForegroundColor Green "Recipe configuration process completed successfully!"
+
     $urlResult = $n8nResponse.Content
 
     try {
         chrome.exe $urlResult
     } catch {
-        Write-Error -Message "An error occured when trying to open chrome.exe, make sure it is accessible in the PATH"
+        Write-Error -Message "An error occurred when trying to open chrome.exe, make sure it is accessible in the PATH"
         throw $_
     }
 

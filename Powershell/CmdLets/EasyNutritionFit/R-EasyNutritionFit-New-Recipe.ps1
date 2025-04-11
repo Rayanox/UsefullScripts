@@ -42,7 +42,7 @@
 
     $PathWorkspace = Ensure-Directories
 
-    if(-not $SkipImport) {
+    if((-not $SkipImport) -and ($Mode -ne "UPLOAD_ONLY")) {
         Write-Host "Starting videos import..." -ForegroundColor Cyan
         
         if($ForceAnswersTrue) {
@@ -56,13 +56,13 @@
             return
         }
     } else {
-        Write-Host "Skipping videos import..." -ForegroundColor Cyan
+        Write-Host "Skipping videos import..." -ForegroundColor Yellow
     }
 
 
     try {
         # Step 1: Aggregate, create and upload the video
-        Write-Host "Starting video aggregation and upload process..." -ForegroundColor Cyan
+        Write-Host "Starting video aggregation and upload process..." -ForegroundColor Blue
         
         $videoId = R-EasyNutritionFit-Compose-Video `
             -PathWorkspace $PathWorkspace `
@@ -71,12 +71,12 @@
             -ForceAnswersTrue:$ForceAnswersTrue `
             -Mode $Mode
 
-        # Si on est en mode VIDEO_COMPOSE_ONLY, on s'arrête ici
+        # If we are in VIDEO_COMPOSE_ONLY mode, we stop here
         if ($Mode -eq "VIDEO_COMPOSE_ONLY") {
             return
         }
 
-        # Si on a pas d'ID vidéo, c'est une erreur
+        # If we don't have a video ID, it's an error
         if ($null -eq $videoId) {
             throw "Failed to upload video to YouTube"
         }
@@ -85,7 +85,7 @@
         Write-Host "Starting recipe configuration process..." -ForegroundColor Cyan
         
         $youtubeUrl = "https://youtu.be/$videoId"
-        # R-EasyNutritionFit-Configure-Recipe -youtubeUrl $youtubeUrl
+        R-EasyNutritionFit-Configure-Recipe -youtubeUrl $youtubeUrl -RecipeName $RecipeName
 
         Write-Host "Recipe creation process completed successfully!" -ForegroundColor Green
     }

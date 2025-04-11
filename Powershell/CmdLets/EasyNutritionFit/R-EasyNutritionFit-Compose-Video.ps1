@@ -33,7 +33,8 @@
     
     $PREFIX_FINALE_VIDEO = 'FV_'
     $CONFIG_DIR = "$env:LOCALAPPDATA\EasyNutritionFit"
-    $UPLOAD_URL = "http://localhost:5678/webhook/9be03d65-4e9d-4e92-9e9f-33de72709845"
+
+    $MAX_SIZE_MB = 400
     
     # ███╗   ███╗ █████╗ ██╗███╗   ██╗
     # ████╗ ████║██╔══██╗██║████╗  ██║
@@ -57,14 +58,16 @@
 
         # Prompt before uploading to YouTube
         if (-not $ForceAnswersTrue) {
-            $confirmUpload = Read-Host "Ready to upload video to YouTube. Press Enter to continue"
+            Write-Host -ForegroundColor Blue "Ready to upload video to YouTube. Press Enter to continue"
+            Write-Host -ForegroundColor DarkRed "ATTENTION: This will upload the video to YouTube. Please: Check the video before uploading, ensure you do not have to modify the video, and that the video is ready to be uploaded before pressing Enter."
+            $confirmUpload = Read-Host
             if ($confirmUpload -ne "") {
                 Write-Host "Operation aborted." -ForegroundColor Yellow
                 exit 1
             }
         }
 
-        return Upload-To-YouTube-Simple -PathWorkspace $PathWorkspace -UploadUrl $UPLOAD_URL -RecipeName $RecipeName
+        return Upload-To-YouTube-Simple -PathWorkspace $PathWorkspace -RecipeName $RecipeName
     }
 
     # Si on arrive ici, soit c'est VIDEO_COMPOSE_ONLY, soit pas de mode spécifié
@@ -72,7 +75,8 @@
     
     # Prompt before merging videos
     if (-not $ForceAnswersTrue) {
-        $confirmMerge = Read-Host "Ready to merge videos. Press Enter to continue"
+        Write-Host -ForegroundColor Blue "Ready to merge videos. Press Enter to continue"
+        $confirmMerge = Read-Host
         if ($confirmMerge -ne "") {
             Write-Host "Operation aborted." -ForegroundColor Yellow
             exit 1
@@ -80,6 +84,13 @@
     }
     
     Concatenate-Videos -PathWorkspace $PathWorkspace
+
+    Write-Host "`nAbout to optimize the video, if you want to modify the video, please do it now before clicking Enter !`n" -ForegroundColor DarkRed
+    #Write-Host "(next steps may take a while (same time as video duration), so please be patient and do not interrupt the process)" -ForegroundColor Blue
+    Write-Host "(next steps may take a while, so please be patient and do not interrupt the process)" -ForegroundColor Blue
+    Read-Host
+
+    #Optimize-Video-For-YouTube-Sending -PathWorkspace $PathWorkspace -RecipeName $RecipeName
 
     # Si mode VIDEO_COMPOSE_ONLY, arrêter ici
     if ($Mode -eq "VIDEO_COMPOSE_ONLY") {
@@ -89,14 +100,16 @@
 
     # Si on arrive ici, c'est qu'on fait l'upload aussi
     if (-not $ForceAnswersTrue) {
-        $confirmUpload = Read-Host "Ready to upload video to YouTube. Press Enter to continue"
+        Write-Host -ForegroundColor Blue "Ready to upload video to YouTube. Press Enter to continue"
+        Write-Host -ForegroundColor DarkRed "ATTENTION: This will upload the video to YouTube. Please: Check the video before uploading, ensure you do not have to modify the video, and that the video is ready to be uploaded before pressing Enter."
+        $confirmUpload = Read-Host
         if ($confirmUpload -ne "") {
             Write-Host "Operation aborted." -ForegroundColor Yellow
             exit 1
         }
     }
     
-    return Upload-To-YouTube-Simple -PathWorkspace $PathWorkspace -UploadUrl $UPLOAD_URL -RecipeName $RecipeName
+    return Upload-To-YouTube-Simple -PathWorkspace $PathWorkspace -RecipeName $RecipeName
 }
 
 # ███████╗██╗   ██╗███╗   ██╗ ██████╗████████╗██╗ ██████╗ ███╗   ██╗███████╗
@@ -106,6 +119,132 @@
 # ██║     ╚██████╔╝██║ ╚████║╚██████╗   ██║   ██║╚█████╔╝██║ ╚████║███████║
 # ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝
 
+
+function Optimize-Video-For-YouTube-Sending {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathWorkspace,
+        [Parameter(Mandatory = $true)]
+        [string]$RecipeName
+    )
+
+    $finalVideo = "$PathWorkspace\$PREFIX_FINALE_VIDEO$RecipeName.mp4"
+    if (-not (Test-Path $finalVideo)) {
+        Write-Host "Final video not found at path: $finalVideo" -ForegroundColor Red
+        return $null
+    }   
+
+    Test-And-Compress-Video -VideoPath $finalVideo
+}
+
+function Test-And-Compress-Video {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VideoPath
+    )
+
+    $fileSizeMB = Get-Video-Size-MB -VideoPath $VideoPath
+
+    if ($fileSizeMB -gt $MAX_SIZE_MB) {
+        Write-Host "La vidéo fait $([math]::Round($fileSizeMB,2)) MB, ce qui dépasse la limite de $MAX_SIZE_MB MB" -ForegroundColor Yellow
+        Write-Host "Compression de la vidéo en cours..." -ForegroundColor Cyan
+
+        Backup-Original-Video -VideoPath $VideoPath
+        Compress-Video -VideoPath $VideoPath
+
+        $newFileSizeMB = Get-Video-Size-MB -VideoPath $VideoPath
+        Write-Host "Compression terminée. Nouvelle taille: $([math]::Round($newFileSizeMB,2)) MB" -ForegroundColor Green
+    }
+    else {
+        Write-Host "La taille de la vidéo ($([math]::Round($fileSizeMB,2)) MB) est acceptable" -ForegroundColor Green
+    }
+}
+
+function Get-Video-Size-MB {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VideoPath
+    )
+    
+    $fileInfo = Get-Item $VideoPath
+    return $fileInfo.Length / 1MB
+}
+
+function Backup-Original-Video {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VideoPath
+    )
+
+    $originalVideo = $VideoPath -replace '\.mp4$', '_ORIGINAL.mp4'
+    Move-Item -Path $VideoPath -Destination $originalVideo -Force
+    return $originalVideo
+}
+
+function Get-Video-Duration-Seconds {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VideoPath
+    )
+
+    $durationOutput = & ffmpeg -i $VideoPath 2>&1
+    $durationMatch = $durationOutput | Select-String "Duration: (\d{2}):(\d{2}):(\d{2})"
+    if ($durationMatch) {
+        $hours = [int]$durationMatch.Matches[0].Groups[1].Value
+        $minutes = [int]$durationMatch.Matches[0].Groups[2].Value 
+        $seconds = [int]$durationMatch.Matches[0].Groups[3].Value
+        return ($hours * 3600) + ($minutes * 60) + $seconds
+    }
+    throw "Impossible de déterminer la durée de la vidéo"
+}
+
+function calculate-bitrate-for-expected-video-size {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$expectedVideoSizeMB
+    )
+
+    $durationSec = Get-Video-Duration-Seconds -VideoPath $originalVideo
+    $bitrateKbps = [math]::Floor(($expectedVideoSizeMB * 8192) / $durationSec)  # 8192 = 1024 * 8
+    return $bitrateKbps
+
+    #$originalVideoSizeMB = Get-Video-Size-MB -VideoPath $VideoPath
+    #$bitRateForExpectedVideoSize = $originalVideoSizeMB / $expectedVideoSizeMB
+    #return $bitRateForExpectedVideoSize
+}   
+
+function Compress-Video {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VideoPath
+    )
+
+    $originalVideo = $VideoPath -replace '\.mp4$', '_ORIGINAL.mp4'
+
+    $bitRateForExpectedVideoSize = calculate-bitrate-for-expected-video-size -expectedVideoSizeMB $MAX_SIZE_MB
+
+    Write-Host "Valeur bitRate = $bitRateForExpectedVideoSize" -ForegroundColor Gray
+    
+
+    try {
+        #$process = Start-Process -NoNewWindow -Wait -FilePath ffmpeg -ArgumentList "-i `"$originalVideo`" -c:v libx264 -crf 28 -preset medium -b:v $bitRateForExpectedVideoSize -c:a aac -b:a 128k `"$VideoPath`"" -PassThru
+        $process = Start-Process -NoNewWindow -Wait -FilePath ffmpeg -ArgumentList "-i `"$originalVideo`" -b:v $($bitRateForExpectedVideoSize)k -maxrate $($bitRateForExpectedVideoSize)k -bufsize $($bitRateForExpectedVideoSize*2)k -c:a aac -b:a 128k `"$VideoPath`"" -PassThru
+        #ffmpeg -i ".\FV_Couscous by Donia.mp4" -b:v 377k -maxrate 377k -bufsize 754k -c:a aac -b:a 128k ./resut.mp4
+        if ($process.ExitCode -ne 0) {
+            Write-Host "Erreur lors de la compression de la vidéo (Code de sortie: $($process.ExitCode))" -ForegroundColor Red
+            # Restaurer le fichier original
+            Move-Item -Path $originalVideo -Destination $VideoPath -Force
+            exit 1
+        }
+    }
+    catch {
+        Write-Host "Erreur lors de l'exécution de FFmpeg: $_" -ForegroundColor Red
+        # Restaurer le fichier original
+        Move-Item -Path $originalVideo -Destination $VideoPath -Force
+        exit 1
+    }
+    
+}
 
 function Check-FFmpeg {
     if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -188,15 +327,12 @@ function Upload-To-YouTube-Simple {
     param(
         [Parameter(Mandatory = $true)]
         [string]$PathWorkspace,
-        
-        [Parameter(Mandatory = $true)]
-        [string]$UploadUrl, 
 
         [Parameter(Mandatory = $true)]
         [string]$RecipeName 
     )
     
-    Write-Host "Preparing to upload to YouTube..." -ForegroundColor Green
+    Write-Host "Preparing to upload to YouTube..." -ForegroundColor Blue
     
     $finalVideo = "$PathWorkspace\$PREFIX_FINALE_VIDEO$RecipeName.mp4"
     if (-not (Test-Path $finalVideo)) {
@@ -205,50 +341,7 @@ function Upload-To-YouTube-Simple {
     }
     
     try {
-        # Créer un objet pour les données multipart
-        $boundary = [System.Guid]::NewGuid().ToString()
-        $LF = "`r`n"
-        
-        # Préparer le contenu du fichier
-        $fileBytes = [System.IO.File]::ReadAllBytes($finalVideo)
-        $encoding = [System.Text.Encoding]::UTF8
-        
-        # Construire le corps de la requête
-        $bodyLines = (
-            "--$boundary",
-            "Content-Disposition: form-data; name=`"NomVideo`"$LF",
-            $RecipeName,
-            "--$boundary",
-            "Content-Disposition: form-data; name=`"data`"; filename=`"$($RecipeName).mp4`"",
-            "Content-Type: video/mp4$LF",
-            [System.Text.Encoding]::UTF8.GetString($fileBytes),
-            "--$boundary--"
-        ) -join $LF
-        
-        Write-Host "Uploading video to server..." -ForegroundColor Cyan
-        
-        # Faire l'appel POST
-        $encodedRecipeName = [System.Web.HttpUtility]::UrlEncode($RecipeName)
-        $response = Invoke-RestMethod `
-            -Uri "$($UploadUrl)?NomVideo=$encodedRecipeName" `
-            -Method Post `
-            -ContentType "multipart/form-data; boundary=$boundary" `
-            -Body $bodyLines
-        
-        if ($response) {
-            $videoId = $response
-            $youtubeUrl = "https://youtu.be/$videoId"
-            
-            Write-Host "Video uploaded successfully!" -ForegroundColor Green
-            Write-Host "Video ID: $videoId" -ForegroundColor Cyan
-            Write-Host "YouTube URL: $youtubeUrl" -ForegroundColor Cyan
-            
-            return $videoId
-        }
-        else {
-            Write-Host "Error: Server returned empty response" -ForegroundColor Red
-            return $null
-        }
+        return R-EasyNutritionFit-Upload-Youtube -VideoPath $finalVideo -Title $RecipeName -PrivacyStatus unlisted
     }
     catch {
         Write-Host "Error uploading video: $_" -ForegroundColor Red

@@ -57,7 +57,7 @@
         Write-Host "Setting import path to $androidPhotosPath" -ForegroundColor Yellow
         $PathImport = $androidPhotosPath
 
-        # Récupérer la liste des vidéos depuis l'appareil
+        # Get video list from device
         $videosToImport = Select-VideosToImport -DeviceId $deviceId -SourcePath $PathImport -AllAnswersTrue $AllAnswersTrue
         if ($videosToImport) {
             Import-SelectedVideos -DeviceId $deviceId -Videos $videosToImport -TargetPath $TargetImportPath
@@ -85,14 +85,14 @@
 function Get-ConnectedAndroidDevice {
     $devices = @(adb devices | Select-Object -Skip 1 | Where-Object { $_ -match "device$" })
     if (-not $devices) {
-        Write-Host "Aucun appareil Android détecté. Veuillez:" -ForegroundColor Red
-        Write-Host "1. Brancher votre téléphone via USB" -ForegroundColor Yellow
-        Write-Host "2. Activer le mode Débogage USB dans les options développeur" -ForegroundColor Yellow
-        Write-Host "3. Autoriser la connexion sur votre téléphone quand la popup apparaît" -ForegroundColor Yellow
+        Write-Host "No Android device detected. Please:" -ForegroundColor Red
+        Write-Host "1. Connect your phone via USB" -ForegroundColor Yellow
+        Write-Host "2. Enable USB Debugging in developer options" -ForegroundColor Yellow
+        Write-Host "3. Allow the connection on your phone when the popup appears" -ForegroundColor Yellow
         return
     }
 
-    Write-Host "Appareil(s) Android détecté(s):" -ForegroundColor Green
+    Write-Host "Android device(s) detected:" -ForegroundColor Green
     $devices | ForEach-Object {
         $serial = $_.Split()[0]
         Write-Host "- $serial" -ForegroundColor Cyan
@@ -107,33 +107,33 @@ function Get-AndroidPhotosPath {
         [string]$deviceId
     )
 
-    # Obtenir le chemin du stockage externe (généralement /sdcard ou /storage/emulated/0)
+    # Get external storage path (usually /sdcard or /storage/emulated/0)
     $storagePath = adb -s $deviceId shell echo `$EXTERNAL_STORAGE
     if (-not $storagePath) {
         $storagePath = "/sdcard"
     }
 
-    # Obtenir le chemin du stockage externe (généralement /sdcard ou /storage/emulated/0)
+    # Get external storage path (usually /sdcard or /storage/emulated/0)
     $storagePath = adb -s $deviceId shell echo `$EXTERNAL_STORAGE
     if (-not $storagePath) {
         $storagePath = "/sdcard"
     }
 
-    # Chemin complet vers le dossier photos (peut varier selon les constructeurs)
+    # Full path to photos folder (may vary by manufacturer)
     $photosPath = "$storagePath/DCIM/Camera"
     
-    # Vérifier si le dossier existe sur l'appareil
+    # Check if folder exists on device
     $folderExists = adb -s $deviceId shell "if [ -d '$photosPath' ]; then echo 'exists'; fi"
     
     if ($folderExists -eq "exists") {
-        Write-Host "Dossier photos/vidéos trouvé:" -ForegroundColor Green
+        Write-Host "Photos/videos folder found:" -ForegroundColor Green
         Write-Host "$photosPath" -ForegroundColor Cyan
         return $photosPath
     }
     else {
-        Write-Host "Le dossier Camera standard n'a pas été trouvé. Tentative de recherche alternative..." -ForegroundColor Yellow
+        Write-Host "Standard Camera folder not found. Trying alternative search..." -ForegroundColor Yellow
         
-        # Recherche alternative pour d'autres constructeurs
+        # Alternative search for other manufacturers
         $alternativePaths = @(
             "$storagePath/DCIM/100ANDRO",
             "$storagePath/DCIM/100MEDIA", 
@@ -145,31 +145,32 @@ function Get-AndroidPhotosPath {
         foreach ($path in $alternativePaths) {
             $folderExists = adb -s $deviceId shell "if [ -d '$path' ]; then echo 'exists'; fi"
             if ($folderExists -eq "exists") {
-                Write-Host "Dossier média trouvé:" -ForegroundColor Green
+                Write-Host "Media folder found:" -ForegroundColor Green
                 Write-Host "$path" -ForegroundColor Cyan
                 return $path
             }
         }
         
-        Write-Host "Impossible de localiser le dossier photos/vidéos sur l'appareil." -ForegroundColor Red
-        Write-Host "Essayez de parcourir manuellement avec: adb shell ls $storagePath/DCIM/" -ForegroundColor Yellow
+        Write-Host "Unable to locate photos/videos folder on device." -ForegroundColor Red
+        Write-Host "Try browsing manually with: adb shell ls $storagePath/DCIM/" -ForegroundColor Yellow
         return $null
     }
 }
 
-# Fonction pour vérifier si le module ADB est disponible
+# Function to check if ADB module is available
 function Test-ADB {
     try {
         $null = Get-Command adb -ErrorAction Stop
         return $true
     }
     catch {
-        Write-Host "ADB (Android Debug Bridge) n'est pas installé ou n'est pas dans le PATH." -ForegroundColor Red
-        Write-Host "Veuillez installer le SDK Android Platform Tools depuis:" -ForegroundColor Yellow
+        Write-Host "ADB (Android Debug Bridge) is not installed or not in PATH." -ForegroundColor Red
+        Write-Host "Please install Android Platform Tools SDK from:" -ForegroundColor Yellow
         Write-Host "https://developer.android.com/studio/releases/platform-tools" -ForegroundColor Cyan
         return $false
     }
 }
+
 function Select-VideosToImport {
     param (
         [Parameter(Mandatory = $true)]
@@ -182,7 +183,7 @@ function Select-VideosToImport {
         [bool]$AllAnswersTrue = $false
     )
 
-    # Récupérer la liste des vidéos avec leurs dates
+    # Get video list with their dates
     $videoList = adb -s $DeviceId shell "ls -l $SourcePath/*.mp4" | 
         Where-Object { $_ -match "\.mp4$" } |
         ForEach-Object {
@@ -195,26 +196,52 @@ function Select-VideosToImport {
             }
         }
 
-    # Grouper par date et trier par date décroissante
+    # Group by date and sort by descending date
     $videosByDate = $videoList | 
         Group-Object { $_.Date.Date } | 
         Sort-Object { $_.Name -as [DateTime] } -Descending
 
-    foreach ($dateGroup in $videosByDate) {
-        if ($dateGroup.Count -ge $MIN_VIDEOS_PER_DAY) {
-            Write-Host "`nDate: $($dateGroup.Name) - Found $($dateGroup.Count) videos recorded:" -ForegroundColor Cyan
+    if($videosByDate.Count -gt 0) {
+        Write-Host "`n`nSelect the video series to import. Use ↑/↓ arrows to navigate, Enter to select, 'q' to quit`n`n" -ForegroundColor Yellow
+    }
+
+    $currentIndex = 0
+    $isGoingDown = $true
+    while ($videosByDate.Count -gt 0) {
+        $dateGroup = $videosByDate[$currentIndex]
+        
+        if ($dateGroup.Count -ge $MIN_VIDEOS_PER_DAY -or $currentIndex -eq 0 -or $currentIndex -eq ($videosByDate.Count - 1)) {
+            Write-Host "`nDate: $([DateTime]::Parse($dateGroup.Name).ToString("dd/MM/yyyy")) - $($dateGroup.Count) videos found:" -ForegroundColor Cyan
             $dateGroup.Group | ForEach-Object { Write-Host "  - $($_.Name)" }
 
-            if (Show-SelectionMenu -Message "Would you like to import these videos?") {
-                return $dateGroup.Group
+            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            
+            switch ($key.VirtualKeyCode) {
+                38 { # Up Arrow
+                    if ($currentIndex -gt 0) { $currentIndex-- }
+                    $isGoingDown = $false
+                }
+                40 { # Down Arrow
+                    if ($currentIndex -lt ($videosByDate.Count - 1)) { $currentIndex++ }
+                    $isGoingDown = $true
+                }
+                13 { # Enter Key
+                    return $dateGroup.Group
+                }
+                81 { # 'q' Key
+                    Write-Host "`nOperation cancelled by user." -ForegroundColor Yellow
+                    return $null
+                }
             }
         } else {
-            Write-Host "Date: $($dateGroup.Name) - Not enough videos found for this date ($($dateGroup.Count) instead of $MIN_VIDEOS_PER_DAY videos). Skipping..." -ForegroundColor Yellow
+            Write-Host "Date: $($dateGroup.Name) - Not enough videos found for this date ($($dateGroup.Count) instead of $MIN_VIDEOS_PER_DAY videos). Skipped..." -ForegroundColor Yellow
+            if ($isGoingDown) { $currentIndex++ } else { $currentIndex-- }
         }
     }
     return $null
 }
 
+<#
 function Show-SelectionMenu {
     param (
         [Parameter(Mandatory = $true)]
@@ -235,13 +262,13 @@ function Show-SelectionMenu {
         
         switch ($response) {
             { $_ -in @('o', 'oui', 'y', 'yes') } { return $true }
-            { $_ -in @('n', 'non', 'no') } { return $false }
+            { $_ -in @('n', 'non', 'no', '') } { return $false }
             default {
-                Write-Host "Réponse non valide. Veuillez répondre par 'o' (oui) ou 'n' (non)." -ForegroundColor Yellow
+                Write-Host "Invalid response. Please respond with 'o' (yes) or 'n' (no) or press Enter to automatically select 'no'." -ForegroundColor Yellow
             }
         }
     } while ($true)
-}
+}#>
 
 function Import-SelectedVideos {
     param (
@@ -266,7 +293,7 @@ function Import-SelectedVideos {
         New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
     }
 
-    # Confirmation avant de commencer l'import
+    # Confirmation before starting import
     if (-not $AllAnswersTrue) {
         Write-Host "`nPreparing to import $($Videos.Count) videos to $TargetPath" -ForegroundColor Cyan
         $confirmImport = Read-Host "Start import process? (Press Enter to confirm, any other key to abort)"
@@ -279,7 +306,7 @@ function Import-SelectedVideos {
     $totalVideos = $Videos.Count
     $currentVideo = 0
 
-    # Trier les vidéos par nom de fichier
+    # Sort videos by filename
     $sortedVideos = $Videos | Sort-Object { $_.Name }
 
     foreach ($video in $sortedVideos) {
