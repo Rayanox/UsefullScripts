@@ -14,11 +14,14 @@
         [switch]$ForceAnswersTrue = $false,
 
         [Parameter(Mandatory = $false, HelpMessage = "Operation mode: VIDEO_COMPOSE_ONLY to only create the video, UPLOAD_ONLY to only upload an existing video.")]
-        [ValidateSet("VIDEO_COMPOSE_ONLY", "UPLOAD_ONLY", "ANY")]
+        [ValidateSet("VIDEO_COMPOSE_ONLY", "UPLOAD_ONLY", "3_CONFIGURE_VIDEO_DIRECTLY", "ANY")]
         [string]$Mode = "ANY",
 
         [Parameter(Mandatory = $false, HelpMessage = "If set, the videos import process will be skipped.")]
-        [switch]$SkipImport = $false
+        [switch]$SkipImport = $false,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the recipe, used to generate the final video filename.")]
+        [string]$YoutubeVideoIdToConfigure
     )
 
     #   ██████╗ ██████╗ ███╗   ██╗███████╗████████╗ █████╗ ███╗   ██╗████████╗███████╗███████╗
@@ -39,61 +42,45 @@
     #  ██║ ╚═╝ ██║██║  ██║██║██║ ╚████║
     #  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝
     
-
-    $PathWorkspace = Ensure-Directories
-
-    if((-not $SkipImport) -and ($Mode -ne "UPLOAD_ONLY")) {
-        Write-Host "Starting videos import..." -ForegroundColor Cyan
-        
-        if($ForceAnswersTrue) {
-            $importSuccess = R-EasyNutritionFit-Import-Videos-Parts -TargetImportPath $PathWorkspace -AllAnswersTrue
-        } else {
-            $importSuccess = R-EasyNutritionFit-Import-Videos-Parts -TargetImportPath $PathWorkspace
-        }
-
-        if(-not $importSuccess) {
-            Write-Host "Failed to import videos. Exiting..." -ForegroundColor Red
+  
+    if ($Mode -eq "3_CONFIGURE_VIDEO_DIRECTLY") {
+        if (-not $YoutubeVideoIdToConfigure) {
+            Write-Host "YoutubeVideoIdToConfigure is required when using the 3_CONFIGURE_VIDEO_DIRECTLY mode." -ForegroundColor Red
             return
         }
-    } else {
-        Write-Host "Skipping videos import..." -ForegroundColor Yellow
-    }
-
-
-    try {
-        # Step 1: Aggregate, create and upload the video
-        Write-Host "Starting video aggregation and upload process..." -ForegroundColor Blue
-        
-        $videoId = R-EasyNutritionFit-Compose-Video `
-            -PathWorkspace $PathWorkspace `
-            -PathImport $PathImport `
-            -RecipeName $RecipeName `
-            -ForceAnswersTrue:$ForceAnswersTrue `
-            -Mode $Mode
-
-        # If we are in VIDEO_COMPOSE_ONLY mode, we stop here
-        if ($Mode -eq "VIDEO_COMPOSE_ONLY") {
-            return
-        }
-
-        # If we don't have a video ID, it's an error
-        if ($null -eq $videoId) {
-            throw "Failed to upload video to YouTube"
-        }
-
-        # Step 2: Configure the recipe
-        Write-Host "Starting recipe configuration process..." -ForegroundColor Cyan
-        
-        $youtubeUrl = "https://youtu.be/$videoId"
-        R-EasyNutritionFit-Configure-Recipe -youtubeUrl $youtubeUrl -RecipeName $RecipeName
-
-        Write-Host "Recipe creation process completed successfully!" -ForegroundColor Green
-    }
-    catch {
-        Write-Error "An error occurred during the recipe creation process: $_"
+        _Step-3-Configure-Recipe-And-Finish -VideoId $YoutubeVideoIdToConfigure -RecipeName $RecipeName
         return
     }
+
+    $PathWorkspace = Test-Directories
+
+    $importSuccess = _Step-1-Import-Videos-Parts -TargetImportPath $PathWorkspace
+    if (-not $importSuccess) {
+        Write-Host "Failed to import videos. Exiting..." -ForegroundColor Red
+        return
+    }
+    
+
+    
+    # Step 2: Aggregate, create and upload the video
+    $videoId = _Step-2-Aggregate-Create-And-Upload-Video -PathWorkspace $PathWorkspace -PathImport $PathImport -RecipeName $RecipeName -ForceAnswersTrue:$ForceAnswersTrue -Mode $Mode
+
+    # If we are in VIDEO_COMPOSE_ONLY mode, we stop here
+    if ($Mode -eq "VIDEO_COMPOSE_ONLY") {
+        return
+    }
+
+    # If we don't have a video ID, it's an error
+    if ($null -eq $videoId) {
+        throw "Failed to upload video to YouTube"
+    }
+
+    # Step 3: Configure the recipe
+    _Step-3-Configure-Recipe-And-Finish -VideoId $videoId -RecipeName $RecipeName
+
+    
 }
+
 
 # ███████╗██╗   ██╗███╗   ██╗ ██████╗████████╗██╗ ██████╗ ███╗   ██╗███████╗
 # ██╔════╝██║   ██║████╗  ██║██╔════╝╚══██╔══╝██║██╔═══██╗████╗  ██║██╔════╝
@@ -102,7 +89,79 @@
 # ██║     ╚██████╔╝██║ ╚████║╚██████╗   ██║   ██║╚█████╔╝██║ ╚████║███████║
 # ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝
 
-function Ensure-Directories {
+function _Step-1-Import-Videos-Parts {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$TargetImportPath
+    )
+
+    if ($SkipImport -or ($Mode -eq "UPLOAD_ONLY")) {
+        return $true
+    }
+
+    Write-Host "Starting videos import..." -ForegroundColor Cyan
+
+    if ($ForceAnswersTrue) {
+        $importSuccess = R-EasyNutritionFit-Import-Videos-Parts -TargetImportPath $PathWorkspace -AllAnswersTrue
+    }
+    else {
+        $importSuccess = R-EasyNutritionFit-Import-Videos-Parts -TargetImportPath $PathWorkspace
+    }
+
+    if (-not $importSuccess) {
+        Write-Host "Failed to import videos. Exiting..." -ForegroundColor Red
+        return $false
+    }
+
+    return $true
+}
+
+function _Step-2-Aggregate-Create-And-Upload-Video {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$PathWorkspace,
+        [Parameter(Mandatory = $true)]
+        [string]$PathImport,
+        [Parameter(Mandatory = $true)]
+        [string]$RecipeName,
+        [Parameter(Mandatory = $true)]
+        [switch]$ForceAnswersTrue,
+        [Parameter(Mandatory = $true)]
+        [string]$Mode
+    )
+
+    Write-Host "Starting video aggregation and upload process..." -ForegroundColor Blue
+        
+    $videoId = R-EasyNutritionFit-Compose-Video `
+        -PathWorkspace $PathWorkspace `
+        -PathImport $PathImport `
+        -RecipeName $RecipeName `
+        -ForceAnswersTrue:$ForceAnswersTrue `
+        -Mode $Mode
+
+    Write-Host "Video aggregation and upload process completed successfully!" -ForegroundColor Green
+
+    return $videoId
+}
+
+function _Step-3-Configure-Recipe-And-Finish {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$videoId,
+        [Parameter(Mandatory = $true)]
+        [string]$RecipeName
+    )
+
+    Write-Host "Starting recipe configuration process..." -ForegroundColor Cyan
+        
+    $youtubeUrl = "https://youtu.be/$videoId"
+    R-EasyNutritionFit-Configure-Recipe -youtubeUrl $youtubeUrl -RecipeName $RecipeName
+
+    Write-Host "Recipe creation process completed successfully!" -ForegroundColor Green
+
+}
+
+function Test-Directories {
     # Initialize workspace path if not provided
     if (-not $PathWorkspace) {
         $PathWorkspace = $PATH_DEFAULT_WORKSPACE
