@@ -20,7 +20,7 @@
         [Parameter(Mandatory = $false, HelpMessage = "If set, the videos import process will be skipped.")]
         [switch]$SkipImport = $false,
 
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the recipe, used to generate the final video filename.")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the recipe, used to generate the final video filename.")]
         [string]$YoutubeVideoIdToConfigure
     )
 
